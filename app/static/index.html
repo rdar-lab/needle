@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Needle - Java Thread Dump Analyzer</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="/static/js/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Navigation Menu -->
+    <nav id="side-nav" class="side-nav hidden">
+        <div class="nav-header">Navigation</div>
+        <ul class="nav-list">
+            <li><a href="#summary" class="nav-link">Summary</a></li>
+            <li><a href="#state-distribution" class="nav-link">Thread States</a></li>
+            <li><a href="#thread-pools" class="nav-link">Thread Pools</a></li>
+            <li><a href="#flamegraph" class="nav-link">Flamegraph</a></li>
+            <li><a href="#deadlocks" class="nav-link">Deadlocks</a></li>
+            <li><a href="#top-cpu" class="nav-link">Top CPU</a></li>
+        </ul>
+    </nav>
+
+    <div class="container">
+        <header>
+            <div class="header-title">
+                <div class="title-group">
+                    <img src="/static/needle.jpg" alt="Needle Logo" class="logo">
+                    <h1>Needle</h1>
+                    <span class="subtitle">Java Thread Dump Analyzer</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Upload Section -->
+        <section id="upload-section" class="upload-section">
+            <div class="upload-container" id="drop-zone">
+                <svg class="upload-icon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                <h2>Upload Thread Dump</h2>
+                <p>Drag and drop your thread dump file here, or click to browse</p>
+                <input type="file" id="file-input" accept=".log,.txt" style="display: none;">
+                <button id="browse-btn" class="btn btn-primary">Browse Files</button>
+                <p class="file-info">Supported formats: .log, .txt (Max 100MB)</p>
+            </div>
+        </section>
+
+        <!-- Loading Indicator -->
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>Analyzing thread dump...</p>
+        </div>
+
+        <!-- Error Message -->
+        <div id="error-message" class="error-message hidden"></div>
+
+        <!-- Results Section -->
+        <section id="results-section" class="results-section hidden">
+            <!-- File Info Bar -->
+            <div id="file-info-bar" class="file-info-bar">
+                <div class="info-item">
+                    <span class="info-label">File:</span>
+                    <span id="file-name" class="info-value">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Thread Dump Time:</span>
+                    <span id="dump-timestamp" class="info-value">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Java Version:</span>
+                    <span id="java-version" class="info-value">-</span>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div id="summary" class="summary-cards">
+                <div class="card">
+                    <h3>Total Threads</h3>
+                    <p id="total-threads" class="metric-value">-</p>
+                </div>
+                <div class="card">
+                    <h3>Daemon Threads</h3>
+                    <p id="daemon-threads" class="metric-value">-</p>
+                </div>
+                <div class="card">
+                    <h3>GC Threads</h3>
+                    <p id="gc-threads" class="metric-value">-</p>
+                </div>
+                <div class="card">
+                    <h3>Blocked Threads</h3>
+                    <p id="blocked-threads" class="metric-value warning">-</p>
+                </div>
+                <div class="card">
+                    <h3>Waiting Threads</h3>
+                    <p id="waiting-threads" class="metric-value info">-</p>
+                </div>
+                <div class="card">
+                    <h3>Deadlocks</h3>
+                    <p id="deadlock-count" class="metric-value danger">-</p>
+                </div>
+            </div>
+
+            <!-- Thread State Distribution Charts -->
+            <div id="state-distribution" class="charts-section">
+                <h2>Thread State Distribution</h2>
+                <div class="charts-layout">
+                    <!-- Left: Pie Chart -->
+                    <div class="chart-item">
+                        <h3>Basic States</h3>
+                        <canvas id="state-chart"></canvas>
+                    </div>
+                    <!-- Right: Bar Chart -->
+                    <div id="detailed-states" class="chart-item">
+                        <h3>Detailed States</h3>
+                        <canvas id="detailed-state-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Thread Pools Chart and Table -->
+            <div id="thread-pools" class="pools-section">
+                <h2>Thread Pools / Thread Groups</h2>
+                <div class="pools-layout">
+                    <!-- Left: Donut Chart -->
+                    <div class="pools-chart-container">
+                        <canvas id="pools-chart"></canvas>
+                    </div>
+                    <!-- Right: Table -->
+                    <div class="pools-table-container">
+                        <table id="pools-table">
+                            <thead>
+                                <tr>
+                                    <th>Thread Pool</th>
+                                    <th>Count</th>
+                                    <th>States</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Flamegraph -->
+            <div id="flamegraph" class="flamegraph-container">
+                <h2>Stack Trace Flamegraph</h2>
+                <div id="flamegraph"></div>
+            </div>
+
+            <!-- Deadlocks Section -->
+            <div id="deadlocks" class="deadlocks-section">
+                <h2>Deadlocks Detected</h2>
+                <div id="deadlocks-list"></div>
+            </div>
+
+            <!-- Top CPU Threads -->
+            <div id="top-cpu" class="table-container">
+                <h2>Top CPU Consuming Threads</h2>
+                <table id="cpu-table">
+                    <thead>
+                        <tr>
+                            <th>Thread Name</th>
+                            <th>State</th>
+                            <th>CPU Time</th>
+                            <th>Stack Trace</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+
+            <!-- Upload New File Button -->
+            <div class="actions">
+                <button id="new-upload-btn" class="btn btn-secondary">Analyze Another File</button>
+            </div>
+        </section>
+    </div>
+
+    <footer>
+        <p>Needle - Java Thread Dump Analyzer | Built with FastAPI</p>
+    </footer>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
