@@ -1,20 +1,25 @@
 """API endpoints for thread dump analysis."""
 
+import logging
 import uuid
-from pathlib import Path
-from typing import Dict
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 from app.core.analyzer import ThreadAnalyzer
 from app.core.flamegraph_generator import generate_flamegraph_svg_from_content
 from app.core.flamegraph_pl import generate_flamegraph_from_collapsed
 from app.core.parser import ThreadDumpParser, extract_java_version_string, extract_timestamp
-from app.core.stackcollapse_jstack import collapse_jstack, collapse_threads
-from app.models.thread_data import AnalysisResult
+from app.core.stackcollapse_jstack import collapse_jstack
 
 router = APIRouter(prefix="/api", tags=["analysis"])
+
+# Configuration constants
+MAX_FILE_SIZE_MB = 100
+MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024  # 100MB
+ALLOWED_FILE_EXTENSIONS = ['.log', '.txt']
 
 
 @router.post("/upload")
@@ -29,21 +34,19 @@ async def upload_thread_dump(file: UploadFile = File(...)):
         Analysis result with thread statistics and flamegraph data
     """
     # Validate file type
-    if not file.filename or (not file.filename.endswith('.log') and
-                             not file.filename.endswith('.txt')):
+    if not file.filename or not any(file.filename.endswith(ext) for ext in ALLOWED_FILE_EXTENSIONS):
         raise HTTPException(
             status_code=400,
-            detail="Invalid file format. Please upload a .log or .txt file."
+            detail=f"Invalid file format. Please upload a {', '.join(ALLOWED_FILE_EXTENSIONS)} file."
         )
 
-    # Check file size (limit to 100MB)
-    MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+    # Check file size
     content = await file.read()
 
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
-            detail=f"File too large. Maximum size is {MAX_FILE_SIZE // (1024*1024)}MB"
+            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB"
         )
 
     # Decode content
@@ -62,14 +65,11 @@ async def upload_thread_dump(file: UploadFile = File(...)):
     parser = ThreadDumpParser()
     try:
         threads, deadlocks = parser.parse(thread_dump_content)
-        print(f"[DEBUG] Parsed {len(threads)} threads, {len(deadlocks)} deadlocks")
+        logger.debug(f"Parsed {len(threads)} threads, {len(deadlocks)} deadlocks")
         if len(threads) == 0:
-            print("[DEBUG] No threads found! First 500 chars of content:")
-            print(thread_dump_content[:500])
+            logger.debug(f"No threads found! First 500 chars of content:\n{thread_dump_content[:500]}")
     except Exception as e:
-        print(f"[ERROR] Parsing failed: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Parsing failed: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to parse thread dump: {str(e)}"
@@ -90,7 +90,7 @@ async def upload_thread_dump(file: UploadFile = File(...)):
 
     potential_deadlocks = analyzer.detect_potential_deadlocks(jvm_deadlock_threads)
     if potential_deadlocks:
-        print(f"[INFO] Detected {len(potential_deadlocks)} potential deadlock(s)")
+        logger.info(f"Detected {len(potential_deadlocks)} potential deadlock(s)")
 
     # Generate flamegraph using perl scripts
     # Generate a unique session ID for this upload
@@ -104,15 +104,13 @@ async def upload_thread_dump(file: UploadFile = File(...)):
         # Generate SVG content directly (no file saved)
         flamegraph_svg = generate_flamegraph_svg_from_content(thread_dump_content)
 
-        print(f"[INFO] Generated flamegraph SVG in memory")
+        logger.info("Generated flamegraph SVG in memory")
 
     except Exception as e:
-        print(f"[ERROR] Failed to generate flamegraph with perl scripts: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.warning(f"Failed to generate flamegraph with primary implementation: {str(e)}", exc_info=True)
 
         # Fallback to Python implementation
-        print("[INFO] Falling back to Python implementation...")
+        logger.info("Falling back to Python implementation...")
         collapsed_lines = [f"{stack} {count}" for stack, count in collapsed.items()]
         flamegraph_svg = generate_flamegraph_from_collapsed(
             collapsed_lines,

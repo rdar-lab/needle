@@ -12,19 +12,36 @@ from typing import Dict, List, Optional
 from app.core.flamegraph_js import FLAMEGRAPH_JS
 
 
+# Default configuration constants for flamegraph generation
+class FlamegraphConfig:
+    """Default configuration for flamegraph generation."""
+
+    DEFAULT_WIDTH = 1200
+    DEFAULT_FRAME_HEIGHT = 16
+    DEFAULT_FONT_SIZE = 12
+    DEFAULT_FONT_TYPE = "Verdana"
+    DEFAULT_COLORS = "hot"
+    DEFAULT_COUNTNAME = "samples"
+    DEFAULT_NAMETYPE = "Function:"
+    DEFAULT_XPAD = 10
+    DEFAULT_YPAD_BASE = 3  # Multiplier for font_size for top padding
+    DEFAULT_YPAD_BOTTOM_MULT = 2  # Multiplier for font_size for bottom padding
+    DEFAULT_YPAD_BOTTOM_ADD = 10  # Additional pixels for bottom padding
+
+
 class FlamegraphPL:
     """Generate flamegraph SVG from collapsed stack traces."""
 
     def __init__(
         self,
         title: str = "Flame Graph",
-        width: int = 1200,
-        frame_height: int = 16,
-        font_size: int = 12,
-        font_type: str = "Verdana",
-        colors: str = "hot",
-        countname: str = "samples",
-        nametype: str = "Function:",
+        width: int = FlamegraphConfig.DEFAULT_WIDTH,
+        frame_height: int = FlamegraphConfig.DEFAULT_FRAME_HEIGHT,
+        font_size: int = FlamegraphConfig.DEFAULT_FONT_SIZE,
+        font_type: str = FlamegraphConfig.DEFAULT_FONT_TYPE,
+        colors: str = FlamegraphConfig.DEFAULT_COLORS,
+        countname: str = FlamegraphConfig.DEFAULT_COUNTNAME,
+        nametype: str = FlamegraphConfig.DEFAULT_NAMETYPE,
         inverted: bool = False,
     ):
         self.title = title
@@ -37,10 +54,10 @@ class FlamegraphPL:
         self.nametype = nametype
         self.inverted = inverted
 
-        # Internal structures
-        self.ypad1 = self.font_size * 3  # pad top, include title
-        self.ypad2 = self.font_size * 2 + 10  # pad bottom, include labels
-        self.xpad = 10  # pad left and right
+        # Internal structures using configuration
+        self.ypad1 = self.font_size * FlamegraphConfig.DEFAULT_YPAD_BASE  # pad top, include title
+        self.ypad2 = self.font_size * FlamegraphConfig.DEFAULT_YPAD_BOTTOM_MULT + FlamegraphConfig.DEFAULT_YPAD_BOTTOM_ADD  # pad bottom, include labels
+        self.xpad = FlamegraphConfig.DEFAULT_XPAD  # pad left and right
         self.depth_max = 0
 
         # Node storage: "func;depth;etime" -> {stime: float}

@@ -1,5 +1,5 @@
 """Thread dump analyzer."""
-
+import re
 from typing import Dict, List
 from collections import Counter
 from app.models.thread_data import ThreadInfo, ThreadStatistics
@@ -7,6 +7,12 @@ from app.models.thread_data import ThreadInfo, ThreadStatistics
 
 class ThreadAnalyzer:
     """Analyze parsed thread data."""
+
+    # Pre-compiled regex patterns for deadlock detection
+    LOCKED_PATTERN = re.compile(r'- locked <(0x[0-9a-f]+)>')
+    WAITING_ON_PATTERN = re.compile(r'- waiting on <(0x[0-9a-f]+)>')
+    WAITING_TO_LOCK_PATTERN = re.compile(r'- waiting to lock <(0x[0-9a-f]+)>')
+    PARKING_TO_WAIT_PATTERN = re.compile(r'- parking to wait for\s+<(0x[0-9a-f]+)>')
 
     def __init__(self, threads: List[ThreadInfo], java_version: str = None, timestamp: str = None):
         self.threads = threads
@@ -149,7 +155,6 @@ class ThreadAnalyzer:
         Returns:
             List of potential deadlock descriptions
         """
-        import re
         from collections import defaultdict
 
         if jvm_deadlock_threads is None:
@@ -161,12 +166,6 @@ class ThreadAnalyzer:
         locks_held = defaultdict(set)
         waiting_for = {}
 
-        # Pattern to extract lock addresses from stack traces
-        locked_pattern = re.compile(r'- locked <(0x[0-9a-f]+)>')
-        waiting_on_pattern = re.compile(r'- waiting on <(0x[0-9a-f]+)>')
-        waiting_to_lock_pattern = re.compile(r'- waiting to lock <(0x[0-9a-f]+)>')
-        parking_to_wait_pattern = re.compile(r'- parking to wait for\s+<(0x[0-9a-f]+)>')
-
         for thread in self.threads:
             thread_name = thread.name
             held_locks = set()
@@ -175,22 +174,22 @@ class ThreadAnalyzer:
             # Analyze stack trace
             for line in thread.stack_trace:
                 # Find locks held by this thread
-                for match in locked_pattern.finditer(line):
+                for match in self.LOCKED_PATTERN.finditer(line):
                     held_locks.add(match.group(1))
 
                 # Find lock the thread is waiting for
                 if not waiting_lock:
-                    match = waiting_on_pattern.search(line)
+                    match = self.WAITING_ON_PATTERN.search(line)
                     if match:
                         waiting_lock = match.group(1)
                         continue
 
-                    match = waiting_to_lock_pattern.search(line)
+                    match = self.WAITING_TO_LOCK_PATTERN.search(line)
                     if match:
                         waiting_lock = match.group(1)
                         continue
 
-                    match = parking_to_wait_pattern.search(line)
+                    match = self.PARKING_TO_WAIT_PATTERN.search(line)
                     if match:
                         waiting_lock = match.group(1)
                         continue

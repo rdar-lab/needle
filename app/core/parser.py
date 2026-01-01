@@ -9,6 +9,56 @@ from app.models.thread_data import ThreadInfo, DeadlockInfo
 class BaseThreadDumpParser(ABC):
     """Base class for version-specific thread dump parsers."""
 
+    # Unified state mapping configuration
+    # Maps raw JVM internal states to standard states and display formats
+    _STATE_MAPPING = {
+        'allocated': {'standard': 'RUNNABLE', 'display': 'Allocated'},
+        'initialized': {'standard': 'RUNNABLE', 'display': 'Initialized'},
+        'runnable': {'standard': 'RUNNABLE', 'display': 'Runnable'},
+        'in runnable': {'standard': 'RUNNABLE', 'display': 'Runnable'},
+        'waiting for monitor entry': {'standard': 'BLOCKED', 'display': 'Waiting for monitor entry'},
+        'waiting on condition': {'standard': 'WAITING', 'display': 'Waiting on condition'},
+        'in object.wait()': {'standard': 'WAITING', 'display': 'Waiting on condition'},
+        'at breakpoint': {'standard': 'RUNNABLE', 'display': 'At breakpoint'},
+        'sleeping': {'standard': 'TIMED_WAITING', 'display': 'Sleeping'},
+        'zombie': {'standard': 'UNKNOWN', 'display': 'Zombie'},
+        'unknown state': {'standard': 'UNKNOWN', 'display': 'Unknown state'},
+    }
+
+    # Thread pool detection patterns
+    # Each entry: ('pool_name', detection_function or pattern)
+    _THREAD_POOL_PATTERNS = [
+        # GC threads with inline GC name detection
+        ('gc_inline', lambda n: re.search(r'\((\w+GC|G1)\)', n).group(1) if re.search(r'\((\w+GC|G1)\)', n) and any(gc in n for gc in ['(ParallelGC)', '(ConcurrentMarkSweepGC)', '(G1 CollectedHeap)', '(G1)']) else None),
+        # G1 GC specific threads
+        ('G1GC', lambda n: 'G1GC' if any(n.startswith(p) for p in ['G1 Conc', 'G1 Refine']) or n in ['G1 Service', 'G1 Main Marker'] else None),
+        # Generic GC threads
+        ('GCThreads', lambda n: 'GCThreads' if any(n.startswith(p) for p in ['GC Thread#', 'GC task thread#']) else None),
+        # Compiler threads
+        ('CompilerThreads', lambda n: 'CompilerThreads' if re.match(r'C[12]\s+CompilerThread', n) else None),
+        # Generic Java threads
+        ('GenericThreads', lambda n: 'GenericThreads' if re.match(r'Thread-\d+$', n) else None),
+        # Special scheduler threads
+        ('SchedulerThreads', lambda n: 'SchedulerThreads' if n in ['-job-', '-task-'] else None),
+        # Catalina utility threads
+        ('CatalinaUtility', lambda n: 'CatalinaUtility' if n.startswith('Catalina-utility') else None),
+        # Logback threads
+        ('Logback', lambda n: 'Logback' if n.startswith('logback-') else None),
+        # JVM internal threads
+        ('JVMInternalThreads', lambda n: 'JVMInternalThreads' if n in ['VM Thread', 'VM Periodic Task Thread', 'Reference Handler', 'Signal Dispatcher', 'Service Thread', 'Finalizer', 'InterruptTimer', 'GC Daemon', 'Sweeper thread', 'Monitor Deflation Thread', 'Notification Thread', 'Common-Cleaner'] else None),
+        # Hikari threads
+        ('HikariPool', lambda n: 'HikariPool' if 'Hikari' in n.lower() else None),
+        # Special threads - use full name as pool
+        ('special', lambda n: n if n in ['commons-pool-EvictionTimer', 'main', 'OracleTimeoutPollingThread', 'MultiThreadedHttpConnectionManager cleanup', 'Attach Listener', 'DestroyJavaVM', 'Monitor Ctrl-Break'] else None),
+    ]
+
+    # Thread pool suffix patterns (processed after patterns above)
+    _POOL_SUFFIX_PATTERNS = [
+        (r'-(Acceptor|Poller)$', lambda m: re.sub(r'-(Acceptor|Poller)$', '', m)),  # Remove suffix
+        (r'.*-(\d+)$', lambda m: re.sub(r'-\d+$', '', m)),  # Remove trailing -number
+        (r'.*#(\d+)$', lambda m: re.sub(r'#\d+$', '', m)),  # Remove trailing #number
+    ]
+
     def __init__(self):
         self.threads: List[ThreadInfo] = []
         self.deadlocks: List[DeadlockInfo] = []
@@ -110,18 +160,15 @@ class BaseThreadDumpParser(ABC):
 
         return self.threads, self.deadlocks
 
-    def _parse_thread(self, header_data: dict, line_idx: int) -> Optional[ThreadInfo]:
-        """Parse a single thread from its header and stack trace."""
-        name = header_data.get('name')
-        if not name:
-            return None
+    def _extract_thread_state(self, header_data: dict, line_idx: int) -> tuple:
+        """Extract thread state and raw state from thread dump.
 
-        # Parse state from next lines
+        Returns:
+            tuple: (state, raw_state) where state is the standard Thread.State
+                   and raw_state is the JVM internal state if available
+        """
         state = "UNKNOWN"
-        raw_state = None  # Store raw state from header for JVM internal threads
-        stack_trace = []
-        thread_group = None
-        pool_name = None
+        raw_state = None
 
         # Look for thread state in next few lines
         for j in range(line_idx + 1, min(line_idx + 5, len(self.raw_lines))):
@@ -137,7 +184,17 @@ class BaseThreadDumpParser(ABC):
             raw_state = header_data['state_in_header'].strip()
             state = self._map_raw_state_to_standard(raw_state)
 
-        # Extract stack trace
+        return state, raw_state
+
+    def _extract_stack_trace(self, line_idx: int) -> tuple:
+        """Extract stack trace and detect pool name from stack trace.
+
+        Returns:
+            tuple: (stack_trace, pool_name)
+        """
+        stack_trace = []
+        pool_name = None
+
         j = line_idx + 1
         while j < len(self.raw_lines):
             line = self._strip_line_prefix(self.raw_lines[j]).strip()
@@ -163,17 +220,35 @@ class BaseThreadDumpParser(ABC):
 
             j += 1
 
-        # Detect thread group from thread name
+        return stack_trace, pool_name
+
+    def _extract_thread_group(self, name: str) -> Optional[str]:
+        """Extract thread group from thread name."""
         if "/" in name:
             parts = name.split("/")
-            thread_group = parts[0] if len(parts) > 1 else None
+            return parts[0] if len(parts) > 1 else None
+        return None
+
+    def _parse_thread(self, header_data: dict, line_idx: int) -> Optional[ThreadInfo]:
+        """Parse a single thread from its header and stack trace."""
+        name = header_data.get('name')
+        if not name:
+            return None
+
+        # Extract thread state
+        state, raw_state = self._extract_thread_state(header_data, line_idx)
+
+        # Extract stack trace and pool name from stack
+        stack_trace, pool_name_from_stack = self._extract_stack_trace(line_idx)
+
+        # Extract thread group
+        thread_group = self._extract_thread_group(name)
 
         # Calculate detailed state
         detailed_state = self._get_detailed_state(state, stack_trace, raw_state)
 
-        # Extract pool name from thread name pattern
-        if not pool_name:
-            pool_name = self._detect_pool_from_name(name)
+        # Extract pool name from thread name pattern if not found in stack
+        pool_name = pool_name_from_stack or self._detect_pool_from_name(name)
 
         return ThreadInfo(
             name=name,
@@ -181,7 +256,7 @@ class BaseThreadDumpParser(ABC):
             nid=header_data.get('nid'),
             priority=header_data.get('priority', 0),
             state=state,
-            raw_state=raw_state,  # Preserve raw state for JVM internal threads
+            raw_state=raw_state,
             detailed_state=detailed_state,
             cpu_time=header_data.get('cpu_time'),
             elapsed_time=header_data.get('elapsed_time'),
@@ -206,27 +281,11 @@ class BaseThreadDumpParser(ABC):
         - zombie -> UNKNOWN
         - unknown state -> UNKNOWN
         """
-        # Remove trailing punctuation and normalize
         state_lower = raw_state.lower().strip().rstrip('.')
 
-        # Map states to standard Thread.State values
-        state_mapping = {
-            'allocated': 'RUNNABLE',
-            'initialized': 'RUNNABLE',
-            'runnable': 'RUNNABLE',
-            'in runnable': 'RUNNABLE',
-            'waiting for monitor entry': 'BLOCKED',
-            'waiting on condition': 'WAITING',
-            'in object.wait()': 'WAITING',
-            'at breakpoint': 'RUNNABLE',
-            'sleeping': 'TIMED_WAITING',
-            'zombie': 'UNKNOWN',
-            'unknown state': 'UNKNOWN',
-        }
-
-        # Try exact match first
-        if state_lower in state_mapping:
-            return state_mapping[state_lower]
+        # Try exact match first using unified mapping
+        if state_lower in self._STATE_MAPPING:
+            return self._STATE_MAPPING[state_lower]['standard']
 
         # Try partial match for flexibility
         if 'runnable' in state_lower:
@@ -252,7 +311,7 @@ class BaseThreadDumpParser(ABC):
         Maps JVM internal thread states to consistent display format:
         - runnable -> Runnable
         - waiting on condition -> Waiting on condition
-        - in Object.wait() -> In Object.wait()
+        - in Object.wait() -> Waiting on condition
         - waiting for monitor entry -> Waiting for monitor entry
         - sleeping -> Sleeping
         - allocated -> Allocated
@@ -261,26 +320,11 @@ class BaseThreadDumpParser(ABC):
         - zombie -> Zombie
         - unknown state -> Unknown state
         """
-        # Remove trailing punctuation and normalize
         state_lower = raw_state.lower().strip().rstrip('.')
 
-        # Map to frontend display format
-        state_display_map = {
-            'runnable': 'Runnable',
-            'in runnable': 'Runnable',
-            'waiting on condition': 'Waiting on condition',
-            'in object.wait()': 'In Object.wait()',
-            'waiting for monitor entry': 'Waiting for monitor entry',
-            'sleeping': 'Sleeping',
-            'allocated': 'Allocated',
-            'initialized': 'Initialized',
-            'at breakpoint': 'At breakpoint',
-            'zombie': 'Zombie',
-            'unknown state': 'Unknown state',
-        }
-
-        if state_lower in state_display_map:
-            return state_display_map[state_lower]
+        # Use unified mapping
+        if state_lower in self._STATE_MAPPING:
+            return self._STATE_MAPPING[state_lower]['display']
 
         # Fallback: capitalize first letter
         return raw_state[0].upper() + raw_state[1:] if raw_state else raw_state
@@ -334,59 +378,21 @@ class BaseThreadDumpParser(ABC):
         return state
 
     def _detect_pool_from_name(self, name: str) -> Optional[str]:
-        """Detect thread pool name from thread name."""
-        # GC threads from Java 8 style
-        if '(ParallelGC)' in name or '(ConcurrentMarkSweepGC)' in name or '(G1 CollectedHeap)' in name or '(G1)' in name:
-            gc_match = re.search(r'\((\w+GC|G1)\)', name)
-            if gc_match:
-                return gc_match.group(1)
-        # G1 GC threads
-        elif name.startswith('G1 Conc') or name.startswith('G1 Refine') or name == 'G1 Service' or name == 'G1 Main Marker':
-            return 'G1GC'
-        # GC threads from Java 11+
-        elif name.startswith('GC Thread#') or name.startswith('GC task thread#'):
-            return 'GCThreads'
-        # Compiler threads
-        elif re.match(r'C[12]\s+CompilerThread', name):
-            return 'CompilerThreads'
-        # Generic Java threads
-        elif re.match(r'Thread-\d+$', name):
-            return 'GenericThreads'
-        # Special scheduler threads
-        elif name in ['-job-', '-task-']:
-            return 'SchedulerThreads'
-        # Catalina utility threads
-        elif name.startswith('Catalina-utility'):
-            return 'CatalinaUtility'
-        # Logback threads
-        elif name.startswith('logback-'):
-            return 'Logback'
-        # JVM internal threads
-        elif name in ['VM Thread', 'VM Periodic Task Thread', 'Reference Handler',
-                      'Signal Dispatcher', 'Service Thread', 'Finalizer',
-                      'InterruptTimer', 'GC Daemon', 'Sweeper thread',
-                      'Monitor Deflation Thread', 'Notification Thread',
-                      'Common-Cleaner']:
-            return 'JVMInternalThreads'
-        # Hikari threads
-        elif 'Hikari' in name.lower():
-            return 'HikariPool'
-        # Threads with special suffixes
-        elif name.endswith('-Acceptor') or name.endswith('-Poller'):
-            return re.sub(r'-(Acceptor|Poller)$', '', name)
-        # Pattern: extract everything before the last "-number"
-        elif re.search(r'.*-\d+$', name):
-            return re.sub(r'-\d+$', '', name)
-        # Pattern with #: G1 Conc#0 -> G1 Conc
-        elif re.search(r'.*#\d+$', name):
-            return re.sub(r'#\d+$', '', name)
-        # Other special threads - use full name as pool
-        elif name in ['commons-pool-EvictionTimer', 'main',
-                      'OracleTimeoutPollingThread',
-                      'MultiThreadedHttpConnectionManager cleanup',
-                      'Attach Listener', 'DestroyJavaVM',
-                      'Monitor Ctrl-Break']:
-            return name
+        """Detect thread pool name from thread name.
+
+        Uses configured patterns to identify common thread pools.
+        Returns None if no pattern matches.
+        """
+        # Try each pattern in order
+        for _pool_name, detector in self._THREAD_POOL_PATTERNS:
+            result = detector(name)
+            if result:
+                return result
+
+        # Try suffix patterns
+        for pattern, transformer in self._POOL_SUFFIX_PATTERNS:
+            if re.search(pattern, name):
+                return transformer(name)
 
         return None
 

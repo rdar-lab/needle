@@ -126,26 +126,6 @@ Upload and analyze a thread dump file.
 ### GET /health
 Health check endpoint for monitoring service availability.
 
-## Testing
-
-The project includes example thread dump files for testing:
-
-```bash
-# Try uploading one of the example files from the web interface
-ls examples/
-# java17_timestamp.log
-# java21_jstack.txt
-# java8_timestamp.log
-```
-
-Or test the API directly:
-```bash
-curl -X POST "http://localhost:8000/api/upload" \
-  -H "accept: application/json" \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@examples/java21_jstack.txt"
-```
-
 ## Technology Stack
 
 ### Backend
@@ -163,6 +143,8 @@ The application supports multiple flamegraph rendering implementations:
 - **Primary**: Perl-style implementation in Python (`flamegraph_pl.py`)
 - **JavaScript**: Alternative rendering engine (`flamegraph_js.py`)
 - **Fallback**: Graceful degradation between implementations
+
+The flamegraph algorithm and visualization technique are based on [Brendan Gregg's FlameGraph project](https://github.com/brendangregg/FlameGraph), the industry-standard tool for flamegraph visualization.
 
 ## Architecture
 
