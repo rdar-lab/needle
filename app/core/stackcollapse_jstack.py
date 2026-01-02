@@ -73,8 +73,12 @@ def collapse_jstack(content: str, include_thread_name: bool = True, include_tid:
             if include_thread_name:
                 tname = name
                 if not include_tid:
-                    # Remove trailing -123 suffix
+                    # Remove trailing -123 suffix (e.g., "pool-1-thread-123" -> "pool-1-thread")
                     tname = re.sub(r'-\d+$', '', tname)
+                    # Remove #123 suffix (e.g., "G1 Conc#0" -> "G1 Conc", "GC Thread#32" -> "GC Thread", "GC task thread#0" -> "GC task thread")
+                    tname = re.sub(r'#\d+', '', tname)
+                    # Remove trailing digits from CompilerThread (e.g., "C2 CompilerThread0" -> "C2 CompilerThread")
+                    tname = re.sub(r'(CompilerThread)\d+$', r'\1', tname)
 
             # Detect background threads
             if re.search(r'C\..*CompilerThread', name):
