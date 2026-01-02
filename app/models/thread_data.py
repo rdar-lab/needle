@@ -8,9 +8,9 @@ class ThreadInfo(BaseModel):
     """Individual thread information."""
 
     name: str
-    tid: str
-    nid: str
-    priority: int
+    tid: Optional[str] = None  # Thread ID (optional for some JVM threads)
+    nid: Optional[str] = None  # Native thread ID (optional for some JVM threads)
+    priority: int = 0
     state: str  # Standard Thread.State: RUNNABLE, BLOCKED, WAITING, TIMED_WAITING
     raw_state: Optional[str] = None  # Raw state from header (for JVM internal threads)
     detailed_state: Optional[str] = None  # Detailed state with reason

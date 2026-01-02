@@ -47,7 +47,7 @@ class BaseThreadDumpParser(ABC):
         # JVM internal threads
         ('JVMInternalThreads', lambda n: 'JVMInternalThreads' if n in ['VM Thread', 'VM Periodic Task Thread', 'Reference Handler', 'Signal Dispatcher', 'Service Thread', 'Finalizer', 'InterruptTimer', 'GC Daemon', 'Sweeper thread', 'Monitor Deflation Thread', 'Notification Thread', 'Common-Cleaner'] else None),
         # Hikari threads
-        ('HikariPool', lambda n: 'HikariPool' if 'Hikari' in n.lower() else None),
+        ('HikariPool', lambda n: 'HikariPool' if 'hikari' in n.lower() else None),
         # Special threads - use full name as pool
         ('special', lambda n: n if n in ['commons-pool-EvictionTimer', 'main', 'OracleTimeoutPollingThread', 'MultiThreadedHttpConnectionManager cleanup', 'Attach Listener', 'DestroyJavaVM', 'Monitor Ctrl-Break'] else None),
     ]

@@ -15,6 +15,10 @@ Yet another modern web application for analyzing Java thread dumps with interact
 - **Modern Web UI**: Clean, responsive interface built with vanilla JavaScript and Chart.js
 - **Multi-Version Support**: Supports Java 8, 11, 17, 21, and 25 thread dump formats with timestamps
 
+## Development Approach
+
+This project is developed using **Vibe Coding** - an AI-assisted development methodology with **GLM 4.7** as the primary large language model. Vibe Coding emphasizes rapid iteration, intelligent code generation, and seamless human-AI collaboration to accelerate development while maintaining code quality.
+
 ## Quick Start
 
 ### Prerequisites
