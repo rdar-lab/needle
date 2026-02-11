@@ -31,8 +31,8 @@ function initializeApp() {
     // Initialize navigation
     initializeNavigation();
 
-    // Store current filename
-    window.currentFileName = null;
+    // Store current filename(s)
+    window.currentFileNames = [];
 }
 
 function handleDragOver(e) {
@@ -52,44 +52,49 @@ function handleDrop(e) {
     e.stopPropagation();
     document.getElementById('drop-zone').classList.remove('drag-over');
 
-    const files = e.dataTransfer.files;
+    const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
-        window.currentFileName = files[0].name;
-        uploadFile(files[0]);
+        window.currentFileNames = files.map(f => f.name);
+        uploadFiles(files);
     }
 }
 
 function handleFileSelect(e) {
-    const file = e.target.files[0];
-    if (file) {
-        window.currentFileName = file.name;
-        uploadFile(file);
+    const files = Array.from(e.target.files);
+    if (files.length > 0) {
+        window.currentFileNames = files.map(f => f.name);
+        uploadFiles(files);
     }
 }
 
-async function uploadFile(file) {
-    // Validate file
+async function uploadFiles(files) {
+    // Validate files
     const validExtensions = ['.log', '.txt'];
-    const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
-
-    if (!validExtensions.includes(fileExtension)) {
-        showError('Invalid file format. Please upload a .log or .txt file.');
-        return;
-    }
-
-    // Check file size (100MB)
-    const maxSize = 100 * 1024 * 1024;
-    if (file.size > maxSize) {
-        showError('File too large. Maximum size is 100MB.');
-        return;
+    
+    for (const file of files) {
+        const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+        
+        if (!validExtensions.includes(fileExtension)) {
+            showError(`Invalid file format for '${file.name}'. Please upload .log or .txt files.`);
+            return;
+        }
+        
+        // Check file size (100MB)
+        const maxSize = 100 * 1024 * 1024;
+        if (file.size > maxSize) {
+            showError(`File '${file.name}' too large. Maximum size is 100MB.`);
+            return;
+        }
     }
 
     // Show loading
     showLoading();
 
-    // Create form data
+    // Create form data with all files
     const formData = new FormData();
-    formData.append('file', file);
+    for (const file of files) {
+        formData.append('files', file);
+    }
 
     try {
         // Upload and analyze
@@ -100,14 +105,14 @@ async function uploadFile(file) {
 
         if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(errorData.detail || 'Failed to analyze thread dump');
+            throw new Error(errorData.detail || 'Failed to analyze thread dump(s)');
         }
 
         const data = await response.json();
         displayResults(data);
 
     } catch (error) {
-        showError(error.message || 'Failed to upload file. Please try again.');
+        showError(error.message || 'Failed to upload files. Please try again.');
         hideLoading();
     }
 }
@@ -136,8 +141,22 @@ function displayResults(data) {
     // Show navigation menu
     document.getElementById('side-nav').classList.remove('hidden');
 
-    // Update file name in summary
-    document.getElementById('file-name').textContent = window.currentFileName || 'Unknown';
+    // Update file names in summary
+    const fileCountElement = document.getElementById('file-count');
+    const fileNameElement = document.getElementById('file-name');
+    
+    if (data.file_count && data.file_count > 1) {
+        fileCountElement.textContent = data.file_count;
+        // Show first few file names with tooltip for full list
+        const displayNames = data.file_names.slice(0, 3).join(', ');
+        const moreCount = data.file_names.length - 3;
+        fileNameElement.textContent = moreCount > 0 ? 
+            `${displayNames} and ${moreCount} more...` : displayNames;
+        fileNameElement.title = data.file_names.join('\n');
+    } else {
+        fileCountElement.textContent = '1';
+        fileNameElement.textContent = window.currentFileNames[0] || data.file_names[0] || 'Unknown';
+    }
 
     // Update thread dump timestamp in summary
     const dumpTimestampElement = document.getElementById('dump-timestamp');
@@ -153,6 +172,14 @@ function displayResults(data) {
         javaVersionElement.textContent = data.statistics.java_version;
     } else {
         javaVersionElement.textContent = 'Unknown';
+    }
+    
+    // Update flamegraph title for burst mode
+    const flamegraphTitle = document.getElementById('flamegraph-title');
+    if (data.file_count && data.file_count > 1) {
+        flamegraphTitle.textContent = `Stack Trace Flamegraph (Burst - ${data.file_count} files)`;
+    } else {
+        flamegraphTitle.textContent = 'Stack Trace Flamegraph';
     }
 
     // Update summary cards
@@ -684,8 +711,8 @@ function resetUpload() {
     // Hide navigation menu
     document.getElementById('side-nav').classList.add('hidden');
 
-    // Reset filename
-    window.currentFileName = null;
+    // Reset filenames
+    window.currentFileNames = [];
 
     // Clear all charts
     const charts = ['state-chart', 'detailed-state-chart', 'pools-chart'];
