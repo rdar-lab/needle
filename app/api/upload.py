@@ -156,9 +156,12 @@ async def upload_thread_dump(files: List[UploadFile] = File(...)):
         # Fallback to Python implementation
         logger.info("Falling back to Python implementation...")
         collapsed_lines = [f"{stack} {count}" for stack, count in merged_collapsed.items()]
+        flamegraph_title = "Thread Dump Flame Graph"
+        if len(files) > 1:
+            flamegraph_title += f" (Burst - {len(files)} files)"
         flamegraph_svg = generate_flamegraph_from_collapsed(
             collapsed_lines,
-            title="Thread Dump Flame Graph (Burst)",
+            title=flamegraph_title,
             colors="java",
             countname="threads",
             nametype="Function:",
