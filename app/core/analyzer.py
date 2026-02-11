@@ -2,7 +2,7 @@
 import re
 from typing import Dict, List
 from collections import Counter
-from app.models.thread_data import ThreadInfo, ThreadStatistics
+from app.models.thread_data import ThreadInfo, ThreadStatistics, ThreadTimeline
 
 
 class ThreadAnalyzer:
@@ -14,10 +14,13 @@ class ThreadAnalyzer:
     WAITING_TO_LOCK_PATTERN = re.compile(r'- waiting to lock <(0x[0-9a-f]+)>')
     PARKING_TO_WAIT_PATTERN = re.compile(r'- parking to wait for\s+<(0x[0-9a-f]+)>')
 
-    def __init__(self, threads: List[ThreadInfo], java_version: str = None, timestamp: str = None):
+    def __init__(self, threads: List[ThreadInfo], java_version: str = None, timestamp: str = None, 
+                 unique_thread_count: int = None, thread_timelines: List[ThreadTimeline] = None):
         self.threads = threads
         self.java_version = java_version
         self.timestamp = timestamp
+        self.unique_thread_count = unique_thread_count or len(threads)
+        self.thread_timelines = thread_timelines or []
 
     def analyze(self) -> ThreadStatistics:
         """
@@ -48,6 +51,7 @@ class ThreadAnalyzer:
 
         return ThreadStatistics(
             total_threads=total_threads,
+            unique_threads=self.unique_thread_count,
             java_version=self.java_version,
             timestamp=self.timestamp,
             state_distribution=state_distribution,
@@ -57,7 +61,8 @@ class ThreadAnalyzer:
             thread_groups=thread_groups,
             daemon_threads=daemon_count,
             non_daemon_threads=non_daemon_count,
-            gc_threads=gc_count
+            gc_threads=gc_count,
+            thread_timelines=self.thread_timelines
         )
 
     def _analyze_states(self) -> Dict[str, int]:

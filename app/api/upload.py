@@ -14,6 +14,7 @@ from app.core.flamegraph_generator import generate_flamegraph_svg_from_content
 from app.core.flamegraph_pl import generate_flamegraph_from_collapsed
 from app.core.parser import ThreadDumpParser, extract_java_version_string, extract_timestamp
 from app.core.stackcollapse_jstack import collapse_jstack
+from app.core.thread_tracker import ThreadTracker
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 
@@ -77,9 +78,9 @@ async def upload_thread_dump(files: List[UploadFile] = File(...)):
         
         thread_dump_contents.append(thread_dump_content)
     
-    # Parse all thread dumps and collect threads
+    # Parse all thread dumps and track threads across dumps
     parser = ThreadDumpParser()
-    all_threads = []
+    tracker = ThreadTracker()
     all_deadlocks = []
     java_versions = []
     timestamps = []
@@ -88,7 +89,11 @@ async def upload_thread_dump(files: List[UploadFile] = File(...)):
         try:
             threads, deadlocks = parser.parse(content)
             logger.debug(f"Parsed {len(threads)} threads from file {i+1}/{len(thread_dump_contents)}")
-            all_threads.extend(threads)
+            
+            # Track each thread with its dump index
+            for thread in threads:
+                tracker.add_thread(thread, dump_index=i, dump_name=file_names[i])
+            
             all_deadlocks.extend(deadlocks)
             
             # Extract metadata from each dump
@@ -107,8 +112,14 @@ async def upload_thread_dump(files: List[UploadFile] = File(...)):
                 detail=f"Failed to parse thread dump from file {i+1} ('{file_names[i]}'): {str(e)}"
             )
 
+    # Analyze unique stacks for each thread
+    tracker.analyze_unique_stacks()
     
-    logger.info(f"Analyzing {len(all_threads)} threads from {len(files)} file(s)")
+    # Get all thread instances for analysis (backward compatible)
+    all_threads = tracker.get_all_thread_instances()
+    unique_thread_count = tracker.get_unique_thread_count()
+    
+    logger.info(f"Analyzing {len(all_threads)} thread instances ({unique_thread_count} unique) from {len(files)} file(s)")
     
     # Use the first Java version and timestamp found (or combine them)
     combined_java_version = java_versions[0] if java_versions else None
@@ -117,7 +128,14 @@ async def upload_thread_dump(files: List[UploadFile] = File(...)):
     )
     
     # Analyze threads
-    analyzer = ThreadAnalyzer(all_threads, java_version=combined_java_version, timestamp=combined_timestamp)
+    thread_timelines = tracker.get_timelines()
+    analyzer = ThreadAnalyzer(
+        all_threads, 
+        java_version=combined_java_version, 
+        timestamp=combined_timestamp,
+        unique_thread_count=unique_thread_count,
+        thread_timelines=thread_timelines
+    )
     statistics = analyzer.analyze()
 
     # Detect potential deadlocks (beyond what JVM reports)
@@ -130,16 +148,12 @@ async def upload_thread_dump(files: List[UploadFile] = File(...)):
     if potential_deadlocks:
         logger.info(f"Detected {len(potential_deadlocks)} potential deadlock(s)")
 
-    # Generate flamegraph using perl scripts
+    # Generate flamegraph using tracked stacks
     # Generate a unique session ID for this upload
     session_id = str(uuid.uuid4())[:8]
 
-    # Merge all collapsed stacks from all thread dumps
-    merged_collapsed = {}
-    for content in thread_dump_contents:
-        collapsed = collapse_jstack(content, include_thread_name=False)
-        for stack, count in collapsed.items():
-            merged_collapsed[stack] = merged_collapsed.get(stack, 0) + count
+    # Get merged collapsed stacks from tracker (properly handles thread deduplication)
+    merged_collapsed = tracker.get_merged_collapsed_stacks()
 
     flamegraph_url = None
     try:
