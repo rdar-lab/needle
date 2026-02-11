@@ -5,6 +5,7 @@ import uuid
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ from app.core.flamegraph_generator import generate_flamegraph_svg_from_content
 from app.core.flamegraph_pl import generate_flamegraph_from_collapsed
 from app.core.parser import ThreadDumpParser, extract_java_version_string, extract_timestamp
 from app.core.stackcollapse_jstack import collapse_jstack
+from app.core.thread_tracker import ThreadTracker
 
 router = APIRouter(prefix="/api", tags=["analysis"])
 
@@ -23,98 +25,157 @@ ALLOWED_FILE_EXTENSIONS = ['.log', '.txt']
 
 
 @router.post("/upload")
-async def upload_thread_dump(file: UploadFile = File(...)):
+async def upload_thread_dump(files: List[UploadFile] = File(...)):
     """
-    Upload and analyze a Java thread dump file.
+    Upload and analyze one or more Java thread dump files (burst).
 
     Args:
-        file: Uploaded thread dump file
+        files: List of uploaded thread dump files (single or multiple)
 
     Returns:
-        Analysis result with thread statistics and flamegraph data
+        Analysis result with thread statistics and flamegraph data merged from all files
     """
-    # Validate file type
-    if not file.filename or not any(file.filename.endswith(ext) for ext in ALLOWED_FILE_EXTENSIONS):
+    # Validate and read all files
+    if not files or len(files) == 0:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file format. Please upload a {', '.join(ALLOWED_FILE_EXTENSIONS)} file."
+            detail="No files uploaded"
         )
-
-    # Check file size
-    content = await file.read()
-
-    if len(content) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB"
-        )
-
-    # Decode content
-    try:
-        thread_dump_content = content.decode('utf-8')
-    except UnicodeDecodeError:
-        try:
-            thread_dump_content = content.decode('latin-1')
-        except Exception as e:
+    
+    file_names = []
+    thread_dump_contents = []
+    
+    for file in files:
+        # Validate file type
+        if not file.filename or not any(file.filename.endswith(ext) for ext in ALLOWED_FILE_EXTENSIONS):
             raise HTTPException(
                 status_code=400,
-                detail=f"Failed to decode file: {str(e)}"
+                detail=f"Invalid file format for '{file.filename}'. Please upload {', '.join(ALLOWED_FILE_EXTENSIONS)} files."
+            )
+        
+        file_names.append(file.filename)
+        
+        # Check file size
+        content = await file.read()
+        
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File '{file.filename}' too large. Maximum size is {MAX_FILE_SIZE_MB}MB"
+            )
+        
+        # Decode content
+        try:
+            thread_dump_content = content.decode('utf-8')
+        except UnicodeDecodeError:
+            try:
+                thread_dump_content = content.decode('latin-1')
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Failed to decode file '{file.filename}': {str(e)}"
+                )
+        
+        thread_dump_contents.append(thread_dump_content)
+    
+    # Parse all thread dumps and track threads across dumps
+    parser = ThreadDumpParser()
+    tracker = ThreadTracker()
+    all_deadlocks = []
+    java_versions = []
+    timestamps = []
+    
+    for i, content in enumerate(thread_dump_contents):
+        try:
+            threads, deadlocks = parser.parse(content)
+            logger.debug(f"Parsed {len(threads)} threads from file {i+1}/{len(thread_dump_contents)}")
+            
+            # Track each thread with its dump index
+            for thread in threads:
+                tracker.add_thread(thread, dump_index=i, dump_name=file_names[i])
+            
+            all_deadlocks.extend(deadlocks)
+            
+            # Extract metadata from each dump
+            java_version = extract_java_version_string(content)
+            if java_version and java_version not in java_versions:
+                java_versions.append(java_version)
+            
+            timestamp = extract_timestamp(content)
+            if timestamp and timestamp not in timestamps:
+                timestamps.append(timestamp)
+                
+        except Exception as e:
+            logger.error(f"Parsing failed for file {i+1}: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to parse thread dump from file {i+1} ('{file_names[i]}'): {str(e)}"
             )
 
-    # Parse thread dump
-    parser = ThreadDumpParser()
-    try:
-        threads, deadlocks = parser.parse(thread_dump_content)
-        logger.debug(f"Parsed {len(threads)} threads, {len(deadlocks)} deadlocks")
-        if len(threads) == 0:
-            logger.debug(f"No threads found! First 500 chars of content:\n{thread_dump_content[:500]}")
-    except Exception as e:
-        logger.error(f"Parsing failed: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to parse thread dump: {str(e)}"
-        )
-
+    # Analyze unique stacks for each thread
+    tracker.analyze_unique_stacks()
+    
+    # Get all thread instances for analysis (backward compatible)
+    all_threads = tracker.get_all_thread_instances()
+    unique_thread_count = tracker.get_unique_thread_count()
+    
+    logger.info(f"Analyzing {len(all_threads)} thread instances ({unique_thread_count} unique) from {len(files)} file(s)")
+    
+    # Use the first Java version and timestamp found (or combine them)
+    combined_java_version = java_versions[0] if java_versions else None
+    combined_timestamp = timestamps[0] if len(timestamps) == 1 else (
+        f"{timestamps[0]} ... {timestamps[-1]}" if len(timestamps) > 1 else None
+    )
+    
     # Analyze threads
-    # Extract Java version string and timestamp
-    java_version = extract_java_version_string(thread_dump_content)
-    timestamp = extract_timestamp(thread_dump_content)
-    analyzer = ThreadAnalyzer(threads, java_version=java_version, timestamp=timestamp)
+    thread_timelines = tracker.get_timelines()
+    analyzer = ThreadAnalyzer(
+        all_threads, 
+        java_version=combined_java_version, 
+        timestamp=combined_timestamp,
+        unique_thread_count=unique_thread_count,
+        thread_timelines=thread_timelines
+    )
     statistics = analyzer.analyze()
 
     # Detect potential deadlocks (beyond what JVM reports)
     # Pass JVM-reported deadlocks to avoid duplicates
     jvm_deadlock_threads = set()
-    for dl in deadlocks:
+    for dl in all_deadlocks:
         jvm_deadlock_threads.add(tuple(sorted(dl.threads)))
 
     potential_deadlocks = analyzer.detect_potential_deadlocks(jvm_deadlock_threads)
     if potential_deadlocks:
         logger.info(f"Detected {len(potential_deadlocks)} potential deadlock(s)")
 
-    # Generate flamegraph using perl scripts
+    # Generate flamegraph using tracked stacks
     # Generate a unique session ID for this upload
     session_id = str(uuid.uuid4())[:8]
 
-    # Also collapse stacks for data analysis
-    collapsed = collapse_jstack(thread_dump_content, include_thread_name=False)
+    # Get merged collapsed stacks from tracker (properly handles thread deduplication)
+    merged_collapsed = tracker.get_merged_collapsed_stacks()
 
     flamegraph_url = None
     try:
-        # Generate SVG content directly (no file saved)
-        flamegraph_svg = generate_flamegraph_svg_from_content(thread_dump_content)
+        # Generate SVG content directly using merged content
+        # Concatenate all thread dump contents
+        merged_content = "\n\n".join(thread_dump_contents)
+        flamegraph_svg = generate_flamegraph_svg_from_content(merged_content)
 
-        logger.info("Generated flamegraph SVG in memory")
+        logger.info("Generated flamegraph SVG in memory from merged content")
 
     except Exception as e:
         logger.warning(f"Failed to generate flamegraph with primary implementation: {str(e)}", exc_info=True)
 
         # Fallback to Python implementation
         logger.info("Falling back to Python implementation...")
-        collapsed_lines = [f"{stack} {count}" for stack, count in collapsed.items()]
+        collapsed_lines = [f"{stack} {count}" for stack, count in merged_collapsed.items()]
+        flamegraph_title = "Thread Dump Flame Graph"
+        if len(files) > 1:
+            flamegraph_title += f" (Burst - {len(files)} files)"
         flamegraph_svg = generate_flamegraph_from_collapsed(
             collapsed_lines,
-            title="Thread Dump Flame Graph",
+            title=flamegraph_title,
             colors="java",
             countname="threads",
             nametype="Function:",
@@ -123,7 +184,7 @@ async def upload_thread_dump(file: UploadFile = File(...)):
 
     # Generate simplified data for frontend
     flamegraph_data = []
-    for stack, count in sorted(collapsed.items(), key=lambda x: x[1], reverse=True):
+    for stack, count in sorted(merged_collapsed.items(), key=lambda x: x[1], reverse=True):
         frames = stack.split(";")
         flamegraph_data.append({
             "frames": frames,
@@ -132,11 +193,13 @@ async def upload_thread_dump(file: UploadFile = File(...)):
         })
 
     # Prepare response
-    total_deadlocks = len(deadlocks) + len(potential_deadlocks)
+    total_deadlocks = len(all_deadlocks) + len(potential_deadlocks)
     response_data = {
         "session_id": session_id,
+        "file_count": len(files),
+        "file_names": file_names,
         "statistics": statistics.model_dump(),
-        "deadlocks": [d.model_dump() for d in deadlocks],
+        "deadlocks": [d.model_dump() for d in all_deadlocks],
         "potential_deadlocks": potential_deadlocks,  # Add detected potential deadlocks
         "total_deadlocks": total_deadlocks,  # Total count including potential deadlocks
         "flamegraph_svg": flamegraph_svg,

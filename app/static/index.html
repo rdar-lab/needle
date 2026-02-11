@@ -16,6 +16,7 @@
             <li><a href="#state-distribution" class="nav-link">Thread States</a></li>
             <li><a href="#thread-pools" class="nav-link">Thread Pools</a></li>
             <li><a href="#flamegraph" class="nav-link">Flamegraph</a></li>
+            <li><a href="#thread-timeline" class="nav-link" id="nav-timeline">Thread Timeline</a></li>
             <li><a href="#deadlocks" class="nav-link">Deadlocks</a></li>
             <li><a href="#top-cpu" class="nav-link">Top CPU</a></li>
         </ul>
@@ -39,10 +40,11 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
                 <h2>Upload Thread Dump</h2>
-                <p>Drag and drop your thread dump file here, or click to browse</p>
-                <input type="file" id="file-input" accept=".log,.txt" style="display: none;">
+                <p>Drag and drop your thread dump file(s) here, or click to browse</p>
+                <p class="file-info-hint">For burst analysis, upload multiple files to see cumulative flame graph</p>
+                <input type="file" id="file-input" accept=".log,.txt" multiple style="display: none;">
                 <button id="browse-btn" class="btn btn-primary">Browse Files</button>
-                <p class="file-info">Supported formats: .log, .txt (Max 100MB)</p>
+                <p class="file-info">Supported formats: .log, .txt (Max 100MB per file)</p>
             </div>
         </section>
 
@@ -60,8 +62,12 @@
             <!-- File Info Bar -->
             <div id="file-info-bar" class="file-info-bar">
                 <div class="info-item">
-                    <span class="info-label">File:</span>
+                    <span class="info-label">File(s):</span>
                     <span id="file-name" class="info-value">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">File Count:</span>
+                    <span id="file-count" class="info-value">-</span>
                 </div>
                 <div class="info-item">
                     <span class="info-label">Thread Dump Time:</span>
@@ -78,6 +84,7 @@
                 <div class="card">
                     <h3>Total Threads</h3>
                     <p id="total-threads" class="metric-value">-</p>
+                    <small id="unique-threads-note" class="metric-note hidden"></small>
                 </div>
                 <div class="card">
                     <h3>Daemon Threads</h3>
@@ -144,8 +151,41 @@
 
             <!-- Flamegraph -->
             <div id="flamegraph" class="flamegraph-container">
-                <h2>Stack Trace Flamegraph</h2>
+                <h2 id="flamegraph-title">Stack Trace Flamegraph</h2>
+                <div id="flamegraph-controls" class="flamegraph-controls hidden">
+                    <label for="thread-filter">Filter by Thread:</label>
+                    <select id="thread-filter">
+                        <option value="">All Threads (Cumulative)</option>
+                    </select>
+                    <span id="thread-info" class="thread-info"></span>
+                </div>
                 <div id="flamegraph"></div>
+            </div>
+
+            <!-- Thread Timeline Section (for burst mode) -->
+            <div id="thread-timeline" class="thread-timeline-section hidden">
+                <h2>Thread Timeline Analysis</h2>
+                <p class="section-description">Track individual threads across multiple dumps</p>
+                <div class="timeline-controls">
+                    <input type="text" id="timeline-search" placeholder="Search threads by name..." />
+                    <label>
+                        <input type="checkbox" id="show-multi-dump-only" />
+                        Show only threads in multiple dumps
+                    </label>
+                </div>
+                <table id="timeline-table">
+                    <thead>
+                        <tr>
+                            <th>Thread Name</th>
+                            <th>Thread ID</th>
+                            <th>Instances</th>
+                            <th>Dumps</th>
+                            <th>Unique Stacks</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
             </div>
 
             <!-- Deadlocks Section -->
