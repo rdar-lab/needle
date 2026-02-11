@@ -789,3 +789,132 @@ footer {
         font-size: 0.8125rem;
     }
 }
+
+/* Thread Timeline Section */
+.thread-timeline-section {
+    margin: 2rem 0;
+    padding: 2rem;
+    background: var(--card-bg);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+
+.section-description {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+}
+
+.timeline-controls {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    align-items: center;
+}
+
+.timeline-controls input[type="text"] {
+    flex: 1;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+.timeline-controls label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+#timeline-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+#timeline-table th,
+#timeline-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+}
+
+#timeline-table th {
+    background: var(--background);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+#timeline-table tbody tr:hover {
+    background: var(--background);
+}
+
+.thread-dumps-badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    background: var(--info-color);
+    color: white;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    margin-right: 0.25rem;
+}
+
+.btn-view-thread {
+    padding: 0.4rem 0.8rem;
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.btn-view-thread:hover {
+    background: var(--primary-hover);
+}
+
+/* Flamegraph Controls */
+.flamegraph-controls {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background: var(--background);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.flamegraph-controls label {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.flamegraph-controls select {
+    flex: 1;
+    max-width: 400px;
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 0.95rem;
+}
+
+.thread-info {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.metric-note {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
+#nav-timeline {
+    display: none;
+}
+
+#nav-timeline.show {
+    display: block;
+}

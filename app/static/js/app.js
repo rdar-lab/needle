@@ -184,6 +184,16 @@ function displayResults(data) {
 
     // Update summary cards
     document.getElementById('total-threads').textContent = data.statistics.total_threads;
+    
+    // Show unique threads note for burst mode
+    const uniqueThreadsNote = document.getElementById('unique-threads-note');
+    if (data.file_count && data.file_count > 1 && data.statistics.unique_threads) {
+        uniqueThreadsNote.textContent = `(${data.statistics.unique_threads} unique threads)`;
+        uniqueThreadsNote.classList.remove('hidden');
+    } else {
+        uniqueThreadsNote.classList.add('hidden');
+    }
+    
     document.getElementById('daemon-threads').textContent = data.statistics.daemon_threads;
     document.getElementById('gc-threads').textContent = data.statistics.gc_threads || 0;
     document.getElementById('blocked-threads').textContent = data.blocked_threads;
@@ -204,6 +214,21 @@ function displayResults(data) {
         renderFlamegraph(data.flamegraph_url, true);
     } else {
         renderFlamegraph(data.flamegraph_svg, false);
+    }
+    
+    // Render thread timeline (for burst mode)
+    if (data.file_count && data.file_count > 1 && data.statistics.thread_timelines) {
+        renderThreadTimeline(data.statistics.thread_timelines, data.file_names);
+        document.getElementById('thread-timeline').classList.remove('hidden');
+        document.getElementById('nav-timeline').classList.add('show');
+        
+        // Show flamegraph controls
+        renderThreadFilter(data.statistics.thread_timelines);
+        document.getElementById('flamegraph-controls').classList.remove('hidden');
+    } else {
+        document.getElementById('thread-timeline').classList.add('hidden');
+        document.getElementById('nav-timeline').classList.remove('show');
+        document.getElementById('flamegraph-controls').classList.add('hidden');
     }
 
     // Render deadlocks (both JVM-detected and potential deadlocks)
@@ -750,14 +775,14 @@ function initializeNavigation() {
 }
 
 function updateActiveNavigation() {
-    const sections = ['summary', 'state-distribution', 'thread-pools', 'flamegraph', 'deadlocks', 'top-cpu'];
+    const sections = ['summary', 'state-distribution', 'thread-pools', 'flamegraph', 'thread-timeline', 'deadlocks', 'top-cpu'];
     const navLinks = document.querySelectorAll('.nav-link');
 
     let currentSection = '';
 
     sections.forEach(sectionId => {
         const section = document.getElementById(sectionId);
-        if (section) {
+        if (section && !section.classList.contains('hidden')) {
             const rect = section.getBoundingClientRect();
             // Check if section is in viewport
             if (rect.top <= 150 && rect.bottom >= 150) {
@@ -778,4 +803,133 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function renderThreadTimeline(timelines, fileNames) {
+    const tbody = document.querySelector('#timeline-table tbody');
+    tbody.innerHTML = '';
+    
+    if (!timelines || timelines.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6">No thread timeline data available</td></tr>';
+        return;
+    }
+    
+    // Store timelines globally for filtering
+    window.threadTimelines = timelines;
+    window.dumpFileNames = fileNames;
+    
+    // Render all timelines
+    renderTimelineRows(timelines, fileNames);
+    
+    // Setup search
+    document.getElementById('timeline-search').addEventListener('input', filterTimelines);
+    document.getElementById('show-multi-dump-only').addEventListener('change', filterTimelines);
+}
+
+function renderTimelineRows(timelines, fileNames) {
+    const tbody = document.querySelector('#timeline-table tbody');
+    tbody.innerHTML = '';
+    
+    timelines.forEach(timeline => {
+        const row = document.createElement('tr');
+        
+        // Thread name
+        const nameCell = document.createElement('td');
+        nameCell.textContent = timeline.name;
+        nameCell.className = 'thread-name';
+        row.appendChild(nameCell);
+        
+        // Thread ID
+        const idCell = document.createElement('td');
+        idCell.textContent = timeline.thread_id;
+        idCell.style.fontSize = '0.85rem';
+        idCell.style.color = 'var(--text-secondary)';
+        row.appendChild(idCell);
+        
+        // Instance count
+        const instanceCell = document.createElement('td');
+        instanceCell.textContent = timeline.instances.length;
+        row.appendChild(instanceCell);
+        
+        // Dumps
+        const dumpsCell = document.createElement('td');
+        timeline.dump_indices.forEach(idx => {
+            const badge = document.createElement('span');
+            badge.className = 'thread-dumps-badge';
+            badge.textContent = idx + 1;
+            badge.title = fileNames[idx];
+            dumpsCell.appendChild(badge);
+        });
+        row.appendChild(dumpsCell);
+        
+        // Unique stacks
+        const stacksCell = document.createElement('td');
+        stacksCell.textContent = timeline.unique_stacks || timeline.instances.length;
+        row.appendChild(stacksCell);
+        
+        // Actions
+        const actionsCell = document.createElement('td');
+        const viewBtn = document.createElement('button');
+        viewBtn.className = 'btn-view-thread';
+        viewBtn.textContent = 'View Details';
+        viewBtn.onclick = () => showThreadDetails(timeline);
+        actionsCell.appendChild(viewBtn);
+        row.appendChild(actionsCell);
+        
+        tbody.appendChild(row);
+    });
+}
+
+function filterTimelines() {
+    const searchTerm = document.getElementById('timeline-search').value.toLowerCase();
+    const multiDumpOnly = document.getElementById('show-multi-dump-only').checked;
+    
+    let filtered = window.threadTimelines;
+    
+    if (searchTerm) {
+        filtered = filtered.filter(t => 
+            t.name.toLowerCase().includes(searchTerm) || 
+            t.thread_id.toLowerCase().includes(searchTerm)
+        );
+    }
+    
+    if (multiDumpOnly) {
+        filtered = filtered.filter(t => t.instances.length > 1);
+    }
+    
+    renderTimelineRows(filtered, window.dumpFileNames);
+}
+
+function showThreadDetails(timeline) {
+    alert(`Thread: ${timeline.name}\nID: ${timeline.thread_id}\nInstances: ${timeline.instances.length}\nDumps: ${timeline.dump_indices.map(i => i+1).join(', ')}\nUnique Stacks: ${timeline.unique_stacks || timeline.instances.length}`);
+    // TODO: Show detailed modal with stack traces
+}
+
+function renderThreadFilter(timelines) {
+    const select = document.getElementById('thread-filter');
+    select.innerHTML = '<option value="">All Threads (Cumulative)</option>';
+    
+    // Add option for each unique thread
+    timelines.forEach(timeline => {
+        const option = document.createElement('option');
+        option.value = timeline.thread_id;
+        option.textContent = `${timeline.name} (${timeline.instances.length} instances)`;
+        select.appendChild(option);
+    });
+    
+    // Handle filter change
+    select.addEventListener('change', function() {
+        const threadId = this.value;
+        const info = document.getElementById('thread-info');
+        
+        if (threadId) {
+            const timeline = timelines.find(t => t.thread_id === threadId);
+            if (timeline) {
+                info.textContent = `Showing ${timeline.instances.length} instances across dumps ${timeline.dump_indices.map(i => i+1).join(', ')}`;
+            }
+            // TODO: Filter flamegraph to show only this thread
+        } else {
+            info.textContent = '';
+        }
+    });
 }
