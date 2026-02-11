@@ -11,6 +11,7 @@ Yet another modern web application for analyzing Java thread dumps with interact
 - **Thread Pool Detection**: Identify and analyze thread pools
 - **Deadlock Detection**: Automatic detection and reporting of deadlocks
 - **Interactive Flamegraph**: SVG-based flamegraph visualization of stack traces with multiple rendering backends
+- **Burst Analysis**: Upload multiple thread dumps to create cumulative flamegraphs showing hot code paths over time
 - **Top CPU Consumers**: Identify threads consuming the most CPU time
 - **Modern Web UI**: Clean, responsive interface built with vanilla JavaScript and Chart.js
 - **Multi-Version Support**: Supports Java 8, 11, 17, 21, and 25 thread dump formats with timestamps
@@ -60,6 +61,8 @@ The application will be available at: http://localhost:8000
 
 ## Usage
 
+### Single Thread Dump Analysis
+
 1. Open your browser and navigate to http://localhost:8000
 2. Upload a Java thread dump file (.log or .txt format)
 3. View the analysis results:
@@ -68,6 +71,22 @@ The application will be available at: http://localhost:8000
    - Flamegraph visualization
    - Deadlock detection
    - Top CPU consuming threads
+
+### Burst Analysis (Multiple Thread Dumps)
+
+For more accurate performance analysis, upload multiple thread dumps taken at different time points:
+
+1. Navigate to http://localhost:8000
+2. Select multiple thread dump files (or drag and drop multiple files)
+3. The analysis will merge all dumps to show:
+   - **Cumulative flamegraph**: Aggregated stack traces revealing hot code paths over time
+   - **Combined statistics**: Total thread counts and states across all dumps
+   - **Better troubleshooting**: Identifies slow code that may only affect one thread intermittently
+
+This "burst mode" is particularly useful for:
+- Capturing intermittent performance issues
+- Identifying slow code paths that appear sporadically
+- Getting a more representative view of application behavior over time
 
 ## Project Structure
 
@@ -101,17 +120,19 @@ needle/
 ## API Endpoints
 
 ### POST /api/upload
-Upload and analyze a thread dump file.
+Upload and analyze one or more thread dump files.
 
 **Request:**
 - Method: POST
 - Content-Type: multipart/form-data
-- Body: file (thread dump file)
+- Body: files (single or multiple thread dump files)
 
-**Response:**
+**Single File Response:**
 ```json
 {
-  "session_id": "filename.log",
+  "session_id": "abc123",
+  "file_count": 1,
+  "file_names": ["dump.txt"],
   "statistics": {
     "total_threads": 156,
     "state_distribution": {...},
@@ -123,6 +144,27 @@ Upload and analyze a thread dump file.
   "flamegraph_data": [...],
   "blocked_threads": 10,
   "waiting_threads": 60,
+  "top_cpu_threads": [...]
+}
+```
+
+**Multiple Files (Burst Mode) Response:**
+```json
+{
+  "session_id": "abc123",
+  "file_count": 3,
+  "file_names": ["dump1.txt", "dump2.txt", "dump3.txt"],
+  "statistics": {
+    "total_threads": 468,  // Merged from all dumps
+    "state_distribution": {...},
+    "thread_pools": {...},
+    "thread_groups": {...}
+  },
+  "deadlocks": [...],
+  "flamegraph_svg": "...",  // Cumulative flamegraph
+  "flamegraph_data": [...],
+  "blocked_threads": 30,
+  "waiting_threads": 180,
   "top_cpu_threads": [...]
 }
 ```
@@ -179,8 +221,10 @@ The flamegraph algorithm and visualization technique are based on [Brendan Gregg
   - Inverted (icicle) graph format for better readability
 
 - **app/api/upload.py**: API endpoints handling file uploads
-  - File size validation (100MB limit)
+  - Supports single or multiple file uploads (burst analysis)
+  - File size validation (100MB limit per file)
   - Multiple encoding support (UTF-8, Latin-1)
+  - Merges threads and stack traces from multiple dumps
   - Graceful error handling with fallback implementations
 
 ## Development
@@ -222,7 +266,8 @@ Example formats supported:
 
 ## Limitations
 
-- Maximum file size: 100MB
+- Maximum file size: 100MB per file
 - Supported formats: .log, .txt
 - Standard Java thread dump format (jstack output)
 - Flamegraph generation may take longer for very large dumps (>1000 threads)
+- Burst mode merges all threads; extremely large combined datasets may impact performance
